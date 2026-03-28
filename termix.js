@@ -2,10 +2,17 @@
 
 const blessed = require("blessed");
 const fs = require("fs");
-
-const FILE = "todos.json";
+const os = require("os");
+const path = require("path");
 
 // ---------------- FILE ----------------
+const DATA_DIR = path.join(os.homedir(), ".termix");
+const FILE = path.join(DATA_DIR, "termix.json");
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
 function loadTodos() {
   try {
     const data = fs.readFileSync(FILE, "utf-8");
@@ -46,15 +53,18 @@ let inputBuffer = "";
 // ---------------- HEADER ----------------
 const header = blessed.box({
   top: 0,
-  height: 1,
+  height: 3,
   width: "100%",
   content: " Termix",
-  style: { bg: "#999", fg: "white" }
+  align: "center",
+  valign: "middle",
+  border: { type: "line" },
+  style: { bg: "#000", fg: "white" }
 });
 
 // ---------------- SIDEBAR ----------------
 const sidebar = blessed.box({
-  top: 1,
+  top: 3,
   left: 0,
   width: "25%",
   bottom: 0,
@@ -68,18 +78,25 @@ function renderSidebar() {
   const done = todos.filter(t => t.done).length;
   const pending = total - done;
   sidebar.setContent(
-    `Total:   ${total}\n\n✔ Done:   ${done}\n\n☐ Pending: ${pending}\n\n\n/ Search\nA Add\nSpace Toggle\nD Delete\nE Edit\nQ Quit`
+    `\nTotal:   ${total}\n✔ Done:   ${done}\n☐ Pending: ${pending}\n\n\n/ Search\nA Add\nSpace Toggle\nD Delete\nE Edit\nQ Quit`
   );
 }
 
 // ---------------- MAIN LIST ----------------
 const list = blessed.list({
-  top: 1,
+  top: 3,
   left: "25%",
   width: "75%",
-  bottom: 4,           // leave room for the input panel at bottom
+  bottom: 4,
   border: { type: "line" },
   label: " Todos ",
+  scrollable: true,
+  alwaysScroll: true,
+  wrap: false,
+  scrollbar: {
+    ch: "█",
+    style: { fg: "cyan" }
+  },
   style: {
     selected: { bg: "green", fg: "black" },
     border: { fg: "cyan" }
@@ -107,7 +124,8 @@ const inputDisplay = blessed.text({
   right: 1,
   height: 1,
   content: "",
-  style: { fg: "white" }
+  style: { fg: "white" },
+  wrap: false,
 });
 
 function setInputPanelMode(label, color, prompt) {
@@ -116,27 +134,83 @@ function setInputPanelMode(label, color, prompt) {
   inputDisplay.setContent(prompt);
 }
 
+// always shows the tail of the buffer so the cursor (█) stays visible
+function getVisibleBuffer(buf, maxWidth) {
+  if (buf.length <= maxWidth) return buf;
+  return "…" + buf.slice(-(maxWidth - 1));
+}
+
 function renderInputPanel() {
+  const screenW = (screen.width && screen.width > 10) ? screen.width : 80;
+  const panelWidth = Math.max(10, Math.floor(screenW * 0.75) - 6);
+
   if (mode === "normal") {
     setInputPanelMode("Ready", "gray", "↑↓/jk Navigate | Space Toggle | D Delete | E Edit | / Search | A Add | Q Quit");
   } else if (mode === "add") {
-    setInputPanelMode("Add Todo  [Enter] confirm  [Esc] cancel", "green", "> " + inputBuffer + "█");
+    setInputPanelMode("Add Todo  [Enter] confirm  [Esc] cancel", "green", "> " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
   } else if (mode === "edit") {
-    setInputPanelMode("Edit Todo  [Enter] confirm  [Esc] cancel", "cyan", "> " + inputBuffer + "█");
+    setInputPanelMode("Edit Todo  [Enter] confirm  [Esc] cancel", "cyan", "> " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
   } else if (mode === "search") {
-    setInputPanelMode("Search  [Enter/Esc] done", "yellow", "/ " + inputBuffer + "█");
+    setInputPanelMode("Search  [Enter] jump to item  [Esc] cancel", "yellow", "/ " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
   }
   screen.render();
 }
 
 // ---------------- RENDER TODOS ----------------
+function wrapText(text, maxWidth) {
+  const words = text.split(" ");
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    if ((current + (current ? " " : "") + word).length > maxWidth) {
+      if (current) lines.push(current);
+      let w = word;
+      while (w.length > maxWidth) {
+        lines.push(w.slice(0, maxWidth));
+        w = w.slice(maxWidth);
+      }
+      current = w;
+    } else {
+      current = current ? current + " " + word : word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+// maps each display line index back to its todo index
+let lineToTodo = [];
+
 function renderTodos() {
   const data = mode === "search" ? filteredTodos : todos;
-  const items = data.length
-    ? data.map(t => `${t.done ? "✔" : "☐"} ${t.text}`)
-    : ["(No todos)"];
+
+  // safely get screen width, fallback to 80 if not ready yet
+  const screenW = (screen.width && screen.width > 10) ? screen.width : 80;
+  const availWidth = Math.floor(screenW * 0.75) - 5;
+  const textWidth = Math.max(10, availWidth - 2); // never below 10
+
+  const items = [];
+  lineToTodo = [];
+
+  if (!data.length) {
+    items.push("(No todos)");
+    lineToTodo.push(0);
+  } else {
+    data.forEach((t, i) => {
+      const icon = t.done ? "✔" : "☐";
+      const lines = wrapText(t.text, textWidth);
+      lines.forEach((line, li) => {
+        items.push((li === 0 ? icon : " ") + " " + line);
+        lineToTodo.push(i);
+      });
+    });
+  }
+
   list.setItems(items);
-  list.select(selectedIndex);
+
+  // highlight the first display line belonging to selectedIndex
+  const displayLine = lineToTodo.indexOf(selectedIndex);
+  list.select(displayLine >= 0 ? displayLine : 0);
 }
 
 function renderAll() {
@@ -147,7 +221,6 @@ function renderAll() {
 
 // ---------------- GLOBAL KEYPRESS (capture typing) ----------------
 screen.on("keypress", (ch, key) => {
-  // Let q/C-c still work in normal mode (handled above via screen.key)
   if (mode === "normal") return;
 
   const k = key.name;
@@ -155,7 +228,6 @@ screen.on("keypress", (ch, key) => {
   if (k === "escape") {
     if (mode === "search") {
       filteredTodos = [...todos];
-      inputBuffer = "";
     }
     mode = "normal";
     inputBuffer = "";
@@ -179,18 +251,13 @@ screen.on("keypress", (ch, key) => {
         saveTodos(todos);
       }
     } else if (mode === "search") {
-      // find the highlighted filtered item's real index in todos
+      // find real index by object reference (filter keeps same refs)
       const matched = filteredTodos[selectedIndex];
       if (matched) {
-        selectedIndex = todos.indexOf(matched);
-        if (selectedIndex === -1) selectedIndex = 0;
+        const realIdx = todos.findIndex(t => t === matched);
+        selectedIndex = realIdx !== -1 ? realIdx : 0;
       }
       filteredTodos = [...todos];
-      mode = "normal";
-      inputBuffer = "";
-      list.focus();
-      renderAll();
-      return;
     }
     mode = "normal";
     inputBuffer = "";
@@ -210,7 +277,7 @@ screen.on("keypress", (ch, key) => {
     filteredTodos = todos.filter(t =>
       t.text.toLowerCase().includes(inputBuffer.toLowerCase())
     );
-    selectedIndex = 0;
+    selectedIndex = 0; // reset to top of filtered results on each keystroke
     renderTodos();
   }
 
@@ -257,19 +324,21 @@ list.key("d", () => {
 
 // ---------------- NAV ----------------
 list.key(["up", "k"], () => {
-  if (mode !== "normal") return;
+  if (mode !== "normal" && mode !== "search") return;
   if (selectedIndex > 0) selectedIndex--;
   renderTodos();
   screen.render();
 });
 
 list.key(["down", "j"], () => {
-  if (mode !== "normal") return;
-  const data = todos;
+  if (mode !== "normal" && mode !== "search") return;
+  const data = mode === "search" ? filteredTodos : todos;
   if (selectedIndex < data.length - 1) selectedIndex++;
   renderTodos();
   screen.render();
 });
+
+
 
 // ---------------- BUILD ----------------
 screen.append(header);
@@ -277,5 +346,8 @@ screen.append(sidebar);
 screen.append(list);
 screen.append(inputPanel);
 
-renderAll();
-list.focus();
+// wait for screen to be fully initialized before first render
+setImmediate(() => {
+  renderAll();
+  list.focus();
+});
