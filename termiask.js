@@ -6,7 +6,7 @@ const os = require("os");
 const path = require("path");
 
 // ---------------- FILE ----------------
-const DATA_DIR = path.join(os.homedir(), ".termix");
+const DATA_DIR = path.join(os.homedir(), ".termiask");
 const FILE = path.join(DATA_DIR, "todos.json");
 
 if (!fs.existsSync(DATA_DIR)) {
@@ -38,7 +38,7 @@ function saveTodos(list) {
 // ---------------- SCREEN ----------------
 const screen = blessed.screen({
   smartCSR: true,
-  title: "Termix",
+  title: "Termiask",
   terminal: "xterm-256color"
 });
 
@@ -91,7 +91,7 @@ const header = blessed.box({
   top: 0,
   height: 3,
   width: "100%",
-  content: " Termix",
+  content: "Termiask",
   align: "center",
   valign: "middle",
   border: { type: "line" },
