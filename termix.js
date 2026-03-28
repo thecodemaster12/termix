@@ -74,11 +74,16 @@ const PRIORITY_ICON = {
   none:  "  ",
 };
 
-function formatDate(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const pad = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function timeAgo(iso) {
+  if (!iso) return "no date";
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000); // seconds
+  if (diff < 60)                   return `${diff}s ago`;
+  if (diff < 3600)                 return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400)                return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 7 * 86400)            return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 30 * 86400)           return `${Math.floor(diff / (7 * 86400))}w ago`;
+  if (diff < 365 * 86400)          return `${Math.floor(diff / (30 * 86400))}mo ago`;
+  return `${Math.floor(diff / (365 * 86400))}y ago`;
 }
 
 // ---------------- HEADER ----------------
@@ -135,34 +140,11 @@ function renderSidebar() {
   );
 }
 
-// ---------------- DETAIL BAR (shows timestamp + priority of selected) ----------------
-const detailBar = blessed.box({
-  top: 3,
-  left: "25%",
-  width: "75%",
-  height: 2,
-  border: { type: "line" },
-  style: { border: { fg: "magenta" } }
-});
 
-function renderDetailBar() {
-  const data = getActiveData();
-  if (!data.length) {
-    detailBar.setContent(" No item selected");
-    return;
-  }
-  const t = data[selectedIndex];
-  if (!t) return;
-  const pri = (t.priority || "none");
-  const priColor = PRIORITY_COLOR[pri];
-  const dateStr = t.createdAt ? `  Created: ${formatDate(t.createdAt)}` : "";
-  detailBar.setContent(` Priority: {${priColor}-fg}${pri.toUpperCase()}{/}${dateStr}`);
-  detailBar.setLine = true;
-}
 
 // ---------------- MAIN LIST ----------------
 const list = blessed.list({
-  top: 5,        // header(3) + detailBar(2)
+  top: 3,
   left: "25%",
   width: "75%",
   bottom: 4,
@@ -353,11 +335,13 @@ function renderTodos() {
       const color    = PRIORITY_COLOR[pri];
       const lines    = wrapText(t.text, textWidth);
 
+      const age = timeAgo(t.createdAt);
+      const ageStr = age.padEnd(8);  // fixed width so text aligns
       lines.forEach((line, li) => {
         if (li === 0) {
-          items.push(`{${color}-fg}${priIcon}{/} ${doneIcon} ${line}`);
+          items.push(`{${color}-fg}${priIcon}{/} {gray-fg}${ageStr}{/} ${doneIcon} ${line}`);
         } else {
-          items.push(`     ${line}`);
+          items.push(`            ${line}`); // indent continuation lines
         }
         lineToTodo.push(i);
       });
@@ -371,7 +355,6 @@ function renderTodos() {
 
 function renderAll() {
   renderSidebar();
-  renderDetailBar();
   renderTodos();
   renderInputPanel();
 }
@@ -569,7 +552,6 @@ list.key("d", () => {
 list.key(["up", "k"], () => {
   if (mode !== "normal" && mode !== "search") return;
   if (selectedIndex > 0) selectedIndex--;
-  renderDetailBar();
   renderTodos();
   screen.render();
 });
@@ -578,7 +560,6 @@ list.key(["down", "j"], () => {
   if (mode !== "normal" && mode !== "search") return;
   const data = getActiveData();
   if (selectedIndex < data.length - 1) selectedIndex++;
-  renderDetailBar();
   renderTodos();
   screen.render();
 });
@@ -586,7 +567,6 @@ list.key(["down", "j"], () => {
 // ---------------- BUILD ----------------
 screen.append(header);
 screen.append(sidebar);
-screen.append(detailBar);
 screen.append(list);
 screen.append(inputPanel);
 screen.append(priorityBox);
