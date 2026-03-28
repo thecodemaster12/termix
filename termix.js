@@ -7,7 +7,7 @@ const path = require("path");
 
 // ---------------- FILE ----------------
 const DATA_DIR = path.join(os.homedir(), ".termix");
-const FILE = path.join(DATA_DIR, "termix.json");
+const FILE = path.join(DATA_DIR, "todos.json");
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -17,24 +17,28 @@ function loadTodos() {
   try {
     const data = fs.readFileSync(FILE, "utf-8");
     const parsed = JSON.parse(data);
-    return parsed.map(item =>
-      typeof item === "string"
-        ? { text: item, done: false }
-        : item
-    );
+    return parsed.map(item => {
+      if (typeof item === "string") return { text: item, done: false, priority: "none", createdAt: null };
+      return {
+        text: item.text || "",
+        done: item.done || false,
+        priority: item.priority || "none",
+        createdAt: item.createdAt || null,
+      };
+    });
   } catch {
     return [];
   }
 }
 
-function saveTodos(todos) {
-  fs.writeFileSync(FILE, JSON.stringify(todos, null, 2));
+function saveTodos(list) {
+  fs.writeFileSync(FILE, JSON.stringify(list, null, 2));
 }
 
 // ---------------- SCREEN ----------------
 const screen = blessed.screen({
   smartCSR: true,
-  title: "Todo Dashboard",
+  title: "Termix",
   terminal: "xterm-256color"
 });
 
@@ -47,8 +51,35 @@ screen.key(["q", "C-c"], () => {
 let todos = loadTodos();
 let filteredTodos = [...todos];
 let selectedIndex = 0;
-let mode = "normal"; // "normal" | "add" | "edit" | "search"
+let mode = "normal";
+// modes: normal | add | edit | search | priority | filter
 let inputBuffer = "";
+let activeFilter = "all"; // all | high | medium | low | none | done | pending
+let pendingPriorityFor = null; // "add" | "edit" — which flow triggered priority pick
+
+// ---------------- PRIORITY HELPERS ----------------
+const PRIORITIES = ["high", "medium", "low", "none"];
+
+const PRIORITY_COLOR = {
+  high:   "red",
+  medium: "yellow",
+  low:    "green",
+  none:   "gray",
+};
+
+const PRIORITY_ICON = {
+  high:   "!!",
+  medium: "! ",
+  low:   ". ",
+  none:  "  ",
+};
+
+function formatDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 // ---------------- HEADER ----------------
 const header = blessed.box({
@@ -75,21 +106,69 @@ const sidebar = blessed.box({
 
 function renderSidebar() {
   const total = todos.length;
-  const done = todos.filter(t => t.done).length;
+  const done  = todos.filter(t => t.done).length;
   const pending = total - done;
+  const high   = todos.filter(t => t.priority === "high").length;
+  const medium = todos.filter(t => t.priority === "medium").length;
+  const low    = todos.filter(t => t.priority === "low").length;
+
+  const filterLabel = activeFilter === "all" ? "all" : activeFilter;
+
   sidebar.setContent(
-    `\nTotal:   ${total}\n✔ Done:   ${done}\n☐ Pending: ${pending}\n\n\n/ Search\nA Add\nSpace Toggle\nD Delete\nE Edit\nQ Quit`
+    `\n Total:   ${total}\n` +
+    ` ✔ Done:   ${done}\n` +
+    ` ☐ Pending: ${pending}\n` +
+    `\n── Priority ──\n` +
+    ` !! High:   ${high}\n` +
+    `  ! Medium: ${medium}\n` +
+    `  . Low:    ${low}\n` +
+    `\n── Filter ──\n` +
+    ` F  [${filterLabel}]\n` +
+    `\n── Keys ──\n` +
+    ` /  Search\n` +
+    ` A  Add\n` +
+    ` E  Edit\n` +
+    ` P  Priority\n` +
+    ` Spc Toggle\n` +
+    ` D  Delete\n` +
+    ` Q  Quit`
   );
+}
+
+// ---------------- DETAIL BAR (shows timestamp + priority of selected) ----------------
+const detailBar = blessed.box({
+  top: 3,
+  left: "25%",
+  width: "75%",
+  height: 2,
+  border: { type: "line" },
+  style: { border: { fg: "magenta" } }
+});
+
+function renderDetailBar() {
+  const data = getActiveData();
+  if (!data.length) {
+    detailBar.setContent(" No item selected");
+    return;
+  }
+  const t = data[selectedIndex];
+  if (!t) return;
+  const pri = (t.priority || "none");
+  const priColor = PRIORITY_COLOR[pri];
+  const dateStr = t.createdAt ? `  Created: ${formatDate(t.createdAt)}` : "";
+  detailBar.setContent(` Priority: {${priColor}-fg}${pri.toUpperCase()}{/}${dateStr}`);
+  detailBar.setLine = true;
 }
 
 // ---------------- MAIN LIST ----------------
 const list = blessed.list({
-  top: 3,
+  top: 5,        // header(3) + detailBar(2)
   left: "25%",
   width: "75%",
   bottom: 4,
   border: { type: "line" },
   label: " Todos ",
+  tags: true,
   scrollable: true,
   alwaysScroll: true,
   wrap: false,
@@ -98,12 +177,64 @@ const list = blessed.list({
     style: { fg: "cyan" }
   },
   style: {
-    selected: { bg: "green", fg: "black" },
+    selected: { bg: "blue", fg: "white" },
     border: { fg: "cyan" }
   },
   keys: true,
   mouse: true,
   items: []
+});
+
+// ---------------- PRIORITY PICKER OVERLAY ----------------
+const priorityBox = blessed.list({
+  top: "center",
+  left: "center",
+  width: 30,
+  height: 7,
+  border: { type: "line" },
+  label: " Set Priority ",
+  tags: true,
+  keys: true,
+  mouse: true,
+  hidden: true,
+  style: {
+    selected: { bg: "blue", fg: "white" },
+    border: { fg: "magenta" }
+  },
+  items: [
+    "{red-fg}!! High{/}",
+    "{yellow-fg} ! Medium{/}",
+    "{green-fg} . Low{/}",
+    "{gray-fg}   None{/}",
+  ]
+});
+
+// ---------------- FILTER PICKER OVERLAY ----------------
+const filterBox = blessed.list({
+  top: "center",
+  left: "center",
+  width: 30,
+  height: 13,
+  border: { type: "line" },
+  label: " Filter By ",
+  tags: true,
+  keys: true,
+  mouse: true,
+  hidden: true,
+  style: {
+    selected: { bg: "blue", fg: "white" },
+    border: { fg: "cyan" }
+  },
+  items: [
+    "  All",
+    "{red-fg}!! High priority{/}",
+    "{yellow-fg} ! Medium priority{/}",
+    "{green-fg} . Low priority{/}",
+    "     No priority",
+    "  ✔ Done",
+    "  ☐ Pending",
+    "  Cancel",
+  ]
 });
 
 // ---------------- BOTTOM INPUT PANEL ----------------
@@ -134,7 +265,6 @@ function setInputPanelMode(label, color, prompt) {
   inputDisplay.setContent(prompt);
 }
 
-// always shows the tail of the buffer so the cursor (█) stays visible
 function getVisibleBuffer(buf, maxWidth) {
   if (buf.length <= maxWidth) return buf;
   return "…" + buf.slice(-(maxWidth - 1));
@@ -145,15 +275,34 @@ function renderInputPanel() {
   const panelWidth = Math.max(10, Math.floor(screenW * 0.75) - 6);
 
   if (mode === "normal") {
-    setInputPanelMode("Ready", "gray", "↑↓/jk Navigate | Space Toggle | D Delete | E Edit | / Search | A Add | Q Quit");
+    setInputPanelMode("Ready", "gray",
+      "↑↓ Nav | Spc Toggle | D Del | E Edit | P Priority | F Filter | / Search | A Add | Q Quit");
   } else if (mode === "add") {
-    setInputPanelMode("Add Todo  [Enter] confirm  [Esc] cancel", "green", "> " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
+    setInputPanelMode("Add Todo  [Enter] confirm  [Esc] cancel", "green",
+      "> " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
   } else if (mode === "edit") {
-    setInputPanelMode("Edit Todo  [Enter] confirm  [Esc] cancel", "cyan", "> " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
+    setInputPanelMode("Edit Todo  [Enter] confirm  [Esc] cancel", "cyan",
+      "> " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
   } else if (mode === "search") {
-    setInputPanelMode("Search  [Enter] jump to item  [Esc] cancel", "yellow", "/ " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
+    setInputPanelMode("Search  [Enter] jump  [Esc] cancel", "yellow",
+      "/ " + getVisibleBuffer(inputBuffer, panelWidth) + "█");
+  } else if (mode === "priority") {
+    setInputPanelMode("Priority", "magenta", "↑↓ pick priority  [Enter] confirm  [Esc] cancel");
+  } else if (mode === "filter") {
+    setInputPanelMode("Filter", "cyan", "↑↓ pick filter  [Enter] apply  [Esc] cancel");
   }
   screen.render();
+}
+
+// ---------------- DATA HELPERS ----------------
+function getActiveData() {
+  const base = mode === "search" ? filteredTodos : todos;
+  if (activeFilter === "all") return base;
+  return base.filter(t => {
+    if (activeFilter === "done")    return t.done;
+    if (activeFilter === "pending") return !t.done;
+    return t.priority === activeFilter;
+  });
 }
 
 // ---------------- RENDER TODOS ----------------
@@ -178,59 +327,66 @@ function wrapText(text, maxWidth) {
   return lines;
 }
 
-// maps each display line index back to its todo index
 let lineToTodo = [];
 
 function renderTodos() {
-  const data = mode === "search" ? filteredTodos : todos;
-
-  // safely get screen width, fallback to 80 if not ready yet
+  const data = getActiveData();
   const screenW = (screen.width && screen.width > 10) ? screen.width : 80;
-  const availWidth = Math.floor(screenW * 0.75) - 5;
-  const textWidth = Math.max(10, availWidth - 2); // never below 10
+  // subtract: border(2) + scrollbar(1) + padding(2) + priority icon(3)
+  const availWidth = Math.floor(screenW * 0.75) - 8;
+  const textWidth  = Math.max(10, availWidth);
 
   const items = [];
   lineToTodo = [];
 
+  const filterSuffix = activeFilter !== "all" ? ` [${activeFilter}]` : "";
+  list.setLabel(` Todos${filterSuffix} `);
+
   if (!data.length) {
-    items.push("(No todos)");
+    items.push("  (No todos)");
     lineToTodo.push(0);
   } else {
     data.forEach((t, i) => {
-      const icon = t.done ? "✔" : "☐";
-      const lines = wrapText(t.text, textWidth);
+      const doneIcon = t.done ? "✔" : "☐";
+      const pri      = t.priority || "none";
+      const priIcon  = PRIORITY_ICON[pri];
+      const color    = PRIORITY_COLOR[pri];
+      const lines    = wrapText(t.text, textWidth);
+
       lines.forEach((line, li) => {
-        items.push((li === 0 ? icon : " ") + " " + line);
+        if (li === 0) {
+          items.push(`{${color}-fg}${priIcon}{/} ${doneIcon} ${line}`);
+        } else {
+          items.push(`     ${line}`);
+        }
         lineToTodo.push(i);
       });
     });
   }
 
   list.setItems(items);
-
-  // highlight the first display line belonging to selectedIndex
   const displayLine = lineToTodo.indexOf(selectedIndex);
   list.select(displayLine >= 0 ? displayLine : 0);
 }
 
 function renderAll() {
   renderSidebar();
+  renderDetailBar();
   renderTodos();
   renderInputPanel();
 }
 
-// ---------------- GLOBAL KEYPRESS (capture typing) ----------------
+// ---------------- GLOBAL KEYPRESS ----------------
 screen.on("keypress", (ch, key) => {
-  if (mode === "normal") return;
+  if (mode === "normal" || mode === "priority" || mode === "filter") return;
 
   const k = key.name;
 
   if (k === "escape") {
-    if (mode === "search") {
-      filteredTodos = [...todos];
-    }
+    if (mode === "search") filteredTodos = [...todos];
     mode = "normal";
     inputBuffer = "";
+    pendingPriorityFor = null;
     list.focus();
     renderAll();
     return;
@@ -240,9 +396,25 @@ screen.on("keypress", (ch, key) => {
     if (mode === "add") {
       const val = inputBuffer.trim();
       if (val) {
-        todos.push({ text: val, done: false });
+        const newTodo = {
+          text: val,
+          done: false,
+          priority: "none",
+          createdAt: new Date().toISOString(),
+        };
+        todos.push(newTodo);
         selectedIndex = todos.length - 1;
         saveTodos(todos);
+        // after adding, open priority picker
+        inputBuffer = "";
+        mode = "priority";
+        pendingPriorityFor = "add";
+        priorityBox.show();
+        priorityBox.select(3); // default to "none"
+        priorityBox.focus();
+        renderAll();
+        screen.render();
+        return;
       }
     } else if (mode === "edit") {
       const val = inputBuffer.trim();
@@ -251,7 +423,6 @@ screen.on("keypress", (ch, key) => {
         saveTodos(todos);
       }
     } else if (mode === "search") {
-      // find real index by object reference (filter keeps same refs)
       const matched = filteredTodos[selectedIndex];
       if (matched) {
         const realIdx = todos.findIndex(t => t === matched);
@@ -272,16 +443,60 @@ screen.on("keypress", (ch, key) => {
     inputBuffer += ch;
   }
 
-  // live filter while searching
   if (mode === "search") {
     filteredTodos = todos.filter(t =>
       t.text.toLowerCase().includes(inputBuffer.toLowerCase())
     );
-    selectedIndex = 0; // reset to top of filtered results on each keystroke
+    selectedIndex = 0;
     renderTodos();
   }
 
   renderInputPanel();
+});
+
+// ---------------- PRIORITY PICKER HANDLER ----------------
+priorityBox.key("enter", () => {
+  const i = priorityBox.selected;
+  const picked = PRIORITIES[i]; // high=0 medium=1 low=2 none=3
+  if (picked !== undefined) {
+    todos[selectedIndex].priority = picked;
+    saveTodos(todos);
+  }
+  priorityBox.hide();
+  mode = "normal";
+  pendingPriorityFor = null;
+  list.focus();
+  renderAll();
+});
+
+priorityBox.key("escape", () => {
+  priorityBox.hide();
+  mode = "normal";
+  pendingPriorityFor = null;
+  list.focus();
+  renderAll();
+});
+
+// ---------------- FILTER PICKER HANDLER ----------------
+const FILTER_VALUES = ["all", "high", "medium", "low", "none", "done", "pending", null];
+
+filterBox.key("enter", () => {
+  const picked = FILTER_VALUES[filterBox.selected];
+  if (picked !== null) {
+    activeFilter = picked;
+    selectedIndex = 0;
+  }
+  filterBox.hide();
+  mode = "normal";
+  list.focus();
+  renderAll();
+});
+
+filterBox.key("escape", () => {
+  filterBox.hide();
+  mode = "normal";
+  list.focus();
+  renderAll();
 });
 
 // ---------------- NORMAL MODE KEYS ----------------
@@ -307,18 +522,46 @@ screen.key("/", () => {
   renderInputPanel();
 });
 
+list.key("p", () => {
+  if (mode !== "normal" || !todos.length) return;
+  mode = "priority";
+  const cur = PRIORITIES.indexOf(todos[selectedIndex].priority || "none");
+  priorityBox.select(cur >= 0 ? cur : 3);
+  priorityBox.show();
+  priorityBox.focus();
+  renderInputPanel();
+  screen.render();
+});
+
+screen.key("f", () => {
+  if (mode !== "normal") return;
+  mode = "filter";
+  const cur = FILTER_VALUES.indexOf(activeFilter);
+  filterBox.select(cur >= 0 ? cur : 0);
+  filterBox.show();
+  filterBox.focus();
+  renderInputPanel();
+  screen.render();
+});
+
 list.key("space", () => {
   if (mode !== "normal" || !todos.length) return;
-  todos[selectedIndex].done = !todos[selectedIndex].done;
-  saveTodos(todos);
+  const data = getActiveData();
+  const real = todos.findIndex(t => t === data[selectedIndex]);
+  if (real !== -1) {
+    todos[real].done = !todos[real].done;
+    saveTodos(todos);
+  }
   renderAll();
 });
 
 list.key("d", () => {
   if (mode !== "normal" || !todos.length) return;
-  todos.splice(selectedIndex, 1);
+  const data = getActiveData();
+  const real = todos.findIndex(t => t === data[selectedIndex]);
+  if (real !== -1) todos.splice(real, 1);
   saveTodos(todos);
-  if (selectedIndex >= todos.length) selectedIndex = Math.max(0, todos.length - 1);
+  if (selectedIndex >= getActiveData().length) selectedIndex = Math.max(0, getActiveData().length - 1);
   renderAll();
 });
 
@@ -326,27 +569,29 @@ list.key("d", () => {
 list.key(["up", "k"], () => {
   if (mode !== "normal" && mode !== "search") return;
   if (selectedIndex > 0) selectedIndex--;
+  renderDetailBar();
   renderTodos();
   screen.render();
 });
 
 list.key(["down", "j"], () => {
   if (mode !== "normal" && mode !== "search") return;
-  const data = mode === "search" ? filteredTodos : todos;
+  const data = getActiveData();
   if (selectedIndex < data.length - 1) selectedIndex++;
+  renderDetailBar();
   renderTodos();
   screen.render();
 });
 
-
-
 // ---------------- BUILD ----------------
 screen.append(header);
 screen.append(sidebar);
+screen.append(detailBar);
 screen.append(list);
 screen.append(inputPanel);
+screen.append(priorityBox);
+screen.append(filterBox);
 
-// wait for screen to be fully initialized before first render
 setImmediate(() => {
   renderAll();
   list.focus();
