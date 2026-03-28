@@ -10,6 +10,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "bin": {
+    "termix": "./termix.js"
+  },
   "dependencies": {
     "blessed": "^0.1.81"
   }
