@@ -38,7 +38,7 @@ function saveTodos(list) {
 // ---------------- SCREEN ----------------
 const screen = blessed.screen({
   smartCSR: true,
-  title: "TermDo",
+  title: "TermiDo",
   terminal: "xterm-256color"
 });
 
@@ -53,10 +53,9 @@ let todos = loadTodos();
 let filteredTodos = [...todos];
 let selectedIndex = 0;
 let mode = "normal";
-// modes: normal | add | edit | search | priority | filter
 let inputBuffer = "";
-let activeFilter = "all"; // all | high | medium | low | none | done | pending
-let pendingPriorityFor = null; // "add" | "edit" — which flow triggered priority pick
+let activeFilter = "all";
+let pendingPriorityFor = null;
 
 // ---------------- PRIORITY HELPERS ----------------
 const PRIORITIES = ["high", "medium", "low", "none"];
@@ -71,19 +70,19 @@ const PRIORITY_COLOR = {
 const PRIORITY_ICON = {
   high:   "!!",
   medium: "! ",
-  low:   ". ",
-  none:  "  ",
+  low:    ". ",
+  none:   "  ",
 };
 
 function timeAgo(iso) {
   if (!iso) return "no date";
-  const diff = Math.floor((Date.now() - new Date(iso)) / 1000); // seconds
-  if (diff < 60)                   return `${diff}s ago`;
-  if (diff < 3600)                 return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400)                return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 7 * 86400)            return `${Math.floor(diff / 86400)}d ago`;
-  if (diff < 30 * 86400)           return `${Math.floor(diff / (7 * 86400))}w ago`;
-  if (diff < 365 * 86400)          return `${Math.floor(diff / (30 * 86400))}mo ago`;
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60)              return `${diff}s ago`;
+  if (diff < 3600)            return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400)           return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 7 * 86400)       return `${Math.floor(diff / 86400)}d ago`;
+  if (diff < 30 * 86400)      return `${Math.floor(diff / (7 * 86400))}w ago`;
+  if (diff < 365 * 86400)     return `${Math.floor(diff / (30 * 86400))}mo ago`;
   return `${Math.floor(diff / (365 * 86400))}y ago`;
 }
 
@@ -92,7 +91,7 @@ const header = blessed.box({
   top: 0,
   height: 3,
   width: "100%",
-  content: " TermiDo",
+  content: "TermiDo",
   align: "center",
   valign: "middle",
   border: { type: "line" },
@@ -104,24 +103,23 @@ const sidebar = blessed.box({
   top: 3,
   left: 0,
   width: "25%",
-  bottom: 0,
+  bottom: 4,
   border: { type: "line" },
   label: " Stats ",
   style: { border: { fg: "yellow" } }
 });
 
 function renderSidebar() {
-  const total = todos.length;
-  const done  = todos.filter(t => t.done).length;
+  const total   = todos.length;
+  const done    = todos.filter(t => t.done).length;
   const pending = total - done;
-  const high   = todos.filter(t => t.priority === "high").length;
-  const medium = todos.filter(t => t.priority === "medium").length;
-  const low    = todos.filter(t => t.priority === "low").length;
-
+  const high    = todos.filter(t => t.priority === "high").length;
+  const medium  = todos.filter(t => t.priority === "medium").length;
+  const low     = todos.filter(t => t.priority === "low").length;
   const filterLabel = activeFilter === "all" ? "all" : activeFilter;
 
   sidebar.setContent(
-    `\n Total:   ${total}\n` +
+    `\n Total:    ${total}\n` +
     ` ✔ Done:   ${done}\n` +
     ` ☐ Pending: ${pending}\n` +
     `\n── Priority ──\n` +
@@ -141,9 +139,7 @@ function renderSidebar() {
   );
 }
 
-
-
-// ---------------- MAIN LIST ----------------
+// ---------------- MAIN LIST (full width below sidebar) ----------------
 const list = blessed.list({
   top: 3,
   left: "25%",
@@ -220,11 +216,11 @@ const filterBox = blessed.list({
   ]
 });
 
-// ---------------- BOTTOM INPUT PANEL ----------------
+// ---------------- BOTTOM INPUT PANEL (full width) ----------------
 const inputPanel = blessed.box({
   bottom: 0,
-  left: "25%",
-  width: "75%",
+  left: 0,
+  width: "100%",
   height: 4,
   border: { type: "line" },
   label: " Ready ",
@@ -255,7 +251,7 @@ function getVisibleBuffer(buf, maxWidth) {
 
 function renderInputPanel() {
   const screenW = (screen.width && screen.width > 10) ? screen.width : 80;
-  const panelWidth = Math.max(10, Math.floor(screenW * 0.75) - 6);
+  const panelWidth = Math.max(10, screenW - 6);
 
   if (mode === "normal") {
     setInputPanelMode("Ready", "gray",
@@ -315,9 +311,9 @@ let lineToTodo = [];
 function renderTodos() {
   const data = getActiveData();
   const screenW = (screen.width && screen.width > 10) ? screen.width : 80;
-  // subtract: border(2) + scrollbar(1) + padding(2) + priority icon(3)
-  const availWidth = Math.floor(screenW * 0.75) - 8;
-  const textWidth  = Math.max(10, availWidth);
+  // 75% width minus border(2) + scrollbar(1) + padding(2) + prefix chars(14)
+  const availWidth = Math.floor(screenW * 0.75) - 5;
+  const textWidth  = Math.max(10, availWidth - 14);
 
   const items = [];
   lineToTodo = [];
@@ -335,14 +331,14 @@ function renderTodos() {
       const priIcon  = PRIORITY_ICON[pri];
       const color    = PRIORITY_COLOR[pri];
       const lines    = wrapText(t.text, textWidth);
+      const age      = timeAgo(t.createdAt);
+      const ageStr   = age.padEnd(8);
 
-      const age = timeAgo(t.createdAt);
-      const ageStr = age.padEnd(8);  // fixed width so text aligns
       lines.forEach((line, li) => {
         if (li === 0) {
           items.push(`{${color}-fg}${priIcon}{/} {gray-fg}${ageStr}{/} ${doneIcon} ${line}`);
         } else {
-          items.push(`            ${line}`); // indent continuation lines
+          items.push(`             ${line}`);
         }
         lineToTodo.push(i);
       });
@@ -389,12 +385,11 @@ screen.on("keypress", (ch, key) => {
         todos.push(newTodo);
         selectedIndex = todos.length - 1;
         saveTodos(todos);
-        // after adding, open priority picker
         inputBuffer = "";
         mode = "priority";
         pendingPriorityFor = "add";
         priorityBox.show();
-        priorityBox.select(3); // default to "none"
+        priorityBox.select(3);
         priorityBox.focus();
         renderAll();
         screen.render();
@@ -441,7 +436,7 @@ screen.on("keypress", (ch, key) => {
 // ---------------- PRIORITY PICKER HANDLER ----------------
 priorityBox.key("enter", () => {
   const i = priorityBox.selected;
-  const picked = PRIORITIES[i]; // high=0 medium=1 low=2 none=3
+  const picked = PRIORITIES[i];
   if (picked !== undefined) {
     todos[selectedIndex].priority = picked;
     saveTodos(todos);
