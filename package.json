@@ -1,8 +1,8 @@
 {
-  "name": "termiask",
+  "name": "termido",
   "version": "1.0.0",
   "description": "A terminal todo manager with priorities, timestamps and search",
-  "main": "termiask.js",
+  "main": "termido.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -11,7 +11,7 @@
   "license": "ISC",
   "type": "commonjs",
   "bin": {
-    "termix": "./termiask.js"
+    "termido": "./termido.js"
   },
   "dependencies": {
     "blessed": "^0.1.81"

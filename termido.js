@@ -6,8 +6,8 @@ const os = require("os");
 const path = require("path");
 
 // ---------------- FILE ----------------
-const DATA_DIR = path.join(os.homedir(), ".termiask");
-const FILE = path.join(DATA_DIR, "todos.json");
+const DATA_DIR = path.join(os.homedir(), ".termido");
+const FILE = path.join(DATA_DIR, "termido.json");
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -38,7 +38,7 @@ function saveTodos(list) {
 // ---------------- SCREEN ----------------
 const screen = blessed.screen({
   smartCSR: true,
-  title: "Termiask",
+  title: "TermiDo",
   terminal: "xterm-256color"
 });
 
@@ -91,7 +91,7 @@ const header = blessed.box({
   top: 0,
   height: 3,
   width: "100%",
-  content: "Termiask",
+  content: "TermiDo",
   align: "center",
   valign: "middle",
   border: { type: "line" },
