@@ -38,11 +38,12 @@ function saveTodos(list) {
 // ---------------- SCREEN ----------------
 const screen = blessed.screen({
   smartCSR: true,
-  title: "TermiDo",
+  title: "TermDo",
   terminal: "xterm-256color"
 });
 
 screen.key(["q", "C-c"], () => {
+  if (mode !== "normal") return;
   screen.destroy();
   process.exit(0);
 });
@@ -91,7 +92,7 @@ const header = blessed.box({
   top: 0,
   height: 3,
   width: "100%",
-  content: "TermiDo",
+  content: " TermiDo",
   align: "center",
   valign: "middle",
   border: { type: "line" },
